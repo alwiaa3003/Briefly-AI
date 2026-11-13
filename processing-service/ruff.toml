@@ -1,0 +1,13 @@
+line-length = 120
+target-version = "py311"
+extend-exclude = [".venv"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[lint.isort]
+known-first-party = ["app", "tests"]
+
+[lint.per-file-ignores]
+# Long literal strings (fixture HTML, sample model output) read better unwrapped.
+"tests/**" = ["E501"]

@@ -1,0 +1,6 @@
+# Development and test dependencies.
+-r requirements.txt
+pytest==8.3.4
+ruff==0.17.4
+# Test-only: builds encrypted / merged PDF fixtures
+pypdf==7.0.1

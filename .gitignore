@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------
+# Briefly AI — files that must never be committed
+# ---------------------------------------------------------------
+
+# Environment files (secrets). Only *.env.example files are tracked.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.eslintcache
+
+# Build output
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Logs
+logs/
+*.log
+
+# Temporary uploads and processing artifacts
+uploads/
+tmp/
+temp/
+*.tmp
+
+# Local database data (if not using Docker named volumes)
+data/
+mongo-data/
+redis-data/
+dump.rdb
+appendonly.aof
+appendonlydir/
+
+# Editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

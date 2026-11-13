@@ -1,0 +1,47 @@
+{
+  "name": "briefly-ai-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Briefly AI primary API (Express, MongoDB, BullMQ)",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch-path=src src/server.js",
+    "worker": "node src/workers/index.js",
+    "worker:dev": "node --watch-path=src src/workers/index.js",
+    "test": "jest",
+    "test:infra": "jest --config jest.infra.config.js --runInBand",
+    "lint": "eslint .",
+    "rag:create-index": "node src/scripts/ragCreateIndex.js",
+    "rag:backfill": "node src/scripts/ragBackfill.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1167.0",
+    "@aws-sdk/lib-storage": "^3.1167.0",
+    "@aws-sdk/s3-request-presigner": "^3.1167.0",
+    "bcrypt": "^5.1.1",
+    "bullmq": "^5.81.5",
+    "busboy": "^1.6.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.3",
+    "express-rate-limit": "^7.5.1",
+    "helmet": "^8.3.0",
+    "ioredis": "^5.11.1",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.24.8",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^15.15.0",
+    "jest": "^29.7.0",
+    "mongodb-memory-server": "^10.4.3",
+    "supertest": "^7.3.2"
+  }
+}

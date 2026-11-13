@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    /* Default (subpixel) smoothing: grayscale antialiasing renders text visibly thinner on macOS. */
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Bold maps to the loaded 600 faces (Inter and Newsreader ship 400/500/600 here), never a synthesized 700. */
+  strong,
+  b {
+    font-weight: 600;
+  }
+
+  body {
+    @apply bg-stone-50 font-sans text-sm text-stone-900;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-400/50 ring-offset-2 ring-offset-white;
+  }
+
+  ::selection {
+    @apply bg-brand-100 text-stone-900;
+  }
+
+  /* Calm, thin scrollbars where the platform allows it. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.stone.300') transparent;
+  }
+}
+
+@layer components {
+  /* Small uppercase label above sections ("Key takeaways", navigation groups, metadata). */
+  .eyebrow {
+    @apply text-2xs font-semibold uppercase tracking-[0.08em] text-stone-500;
+  }
+
+  /* Page-level serif title. */
+  .page-title {
+    @apply font-serif text-[1.875rem] font-semibold leading-[1.15] tracking-[-0.01em] text-stone-900 sm:text-[2.125rem];
+  }
+
+  /* Long-form reading text (summaries, notes, answers). */
+  .reading {
+    @apply font-serif text-reading text-stone-800;
+  }
+
+  .reading p + p {
+    @apply mt-4;
+  }
+
+  /* Base for form controls: inputs, selects, textareas. */
+  .control {
+    @apply block w-full rounded-md border border-stone-200 bg-white px-3 text-sm text-stone-900 transition-colors duration-150;
+    @apply placeholder:text-placeholder hover:border-stone-300 focus:border-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-400/30;
+    @apply disabled:cursor-not-allowed disabled:bg-stone-50 disabled:text-stone-500;
+  }
+
+  /* Interactive list rows (library, recent items, study lists). */
+  .list-row {
+    @apply transition-colors duration-150 hover:bg-white/70;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

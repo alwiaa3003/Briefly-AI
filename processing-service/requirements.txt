@@ -1,0 +1,19 @@
+# Runtime dependencies for the Briefly AI processing service.
+fastapi==0.115.6
+uvicorn==0.34.0
+pydantic==2.14.3
+pydantic-settings==2.7.1
+httpx==0.28.1
+# Article extraction (main content + metadata; parses HTML, never executes scripts)
+trafilatura==2.3.1
+# Official Google Gemini SDK
+google-genai==3.2.0
+# Bundled ffmpeg binary for probing videos and extracting audio (override with FFMPEG_PATH)
+imageio-ffmpeg==0.8.1
+# Documents: PDF layout/text (MIT), PDF rendering for OCR + encryption checks (Apache-2.0/BSD),
+# DOCX (MIT), page images (MIT-CMU). charset-normalizer (TXT encodings) comes with trafilatura.
+pdfminer.six==20260107
+pypdfium2==5.15.2
+python-docx==1.2.0
+pillow==13.0.0
+charset-normalizer==3.5.2
