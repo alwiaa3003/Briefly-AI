@@ -2,6 +2,8 @@
 
 const sourceService = require('../services/sourceService');
 const uploadService = require('../services/uploadService');
+const directUploadService = require('../services/directUploadService');
+const { SOURCE_KINDS } = require('../queues/constants');
 const { sendSuccess } = require('../utils/http');
 
 function jobSummary(job) {
@@ -35,6 +37,30 @@ async function uploadDocument(req, res) {
   const stored = await uploadService.receiveDocumentUpload(req, { userId: req.auth.userId });
   return respondWithSubmission(res, await sourceService.submitUploadedDocument({ userId: req.auth.userId, stored }));
 }
+
+/*
+ * Direct uploads (browser -> object storage). Same responses as the streaming endpoints above:
+ * start returns a presigned URL; complete returns { source, job, duplicate } once verified.
+ */
+function directUploadActions(kind) {
+  return {
+    async start(req, res) {
+      res.set('Cache-Control', 'no-store');
+      return sendSuccess(res, 201, await directUploadService.startUpload({ userId: req.auth.userId, kind, ...req.body }));
+    },
+    async complete(req, res) {
+      const result = await directUploadService.completeUpload({ userId: req.auth.userId, kind, uploadId: req.params.uploadId });
+      return respondWithSubmission(res, result);
+    },
+    async cancel(req, res) {
+      await directUploadService.cancelUpload({ userId: req.auth.userId, kind, uploadId: req.params.uploadId });
+      return res.status(204).end();
+    },
+  };
+}
+
+const directVideoUpload = directUploadActions(SOURCE_KINDS.VIDEO);
+const directDocumentUpload = directUploadActions(SOURCE_KINDS.DOCUMENT);
 
 /** GET /api/documents/uploads/config */
 function getDocumentUploadConfig(_req, res) {
@@ -100,6 +126,8 @@ async function retrySource(req, res) {
 }
 
 module.exports = {
+  directVideoUpload,
+  directDocumentUpload,
   submitArticle,
   submitYouTube,
   uploadVideo,

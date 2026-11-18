@@ -22,7 +22,10 @@ let inFlightRefresh = null;
 export function refreshSession() {
   if (!inFlightRefresh) {
     inFlightRefresh = apiClient
-      .post('/auth/refresh')
+      // Long enough for a sleeping server to start within one request. Retried only when the
+      // platform answered for a server that is still starting (the request never reached the API),
+      // never after a timeout: the token may already have been rotated.
+      .post('/auth/refresh', null, { timeout: 75000, retryWhileStarting: true })
       .then((response) => response.data.data)
       .finally(() => {
         inFlightRefresh = null;

@@ -37,7 +37,7 @@ test('deletes expired files from storage and marks them deleted; keeps current o
 
   const result = await cleanupExpiredUploads();
 
-  expect(result).toEqual({ deleted: 1, failed: 0, skipped: false });
+  expect(result).toEqual({ deleted: 1, failed: 0, purged: 0, skipped: false });
   expect(storageMock.__state.deleted).toEqual([expired.storageKey]);
   expect((await Upload.findById(expired.id)).status).toBe('deleted');
   expect((await Upload.findById(expired.id)).deletedAt).toBeInstanceOf(Date);
@@ -49,7 +49,7 @@ test('storage failures leave the record for the next run', async () => {
   const expired = await makeUpload(-60_000);
   storageMock.__state.failDelete = true;
 
-  expect(await cleanupExpiredUploads()).toEqual({ deleted: 0, failed: 1, skipped: false });
+  expect(await cleanupExpiredUploads()).toEqual({ deleted: 0, failed: 1, purged: 0, skipped: false });
   expect((await Upload.findById(expired.id)).status).toBe('stored');
 
   storageMock.__state.failDelete = false;
@@ -59,7 +59,7 @@ test('storage failures leave the record for the next run', async () => {
 test('does nothing when storage is not configured', async () => {
   await makeUpload(-60_000);
   storageMock.__state.configured = false;
-  expect(await cleanupExpiredUploads()).toEqual({ deleted: 0, failed: 0, skipped: true });
+  expect(await cleanupExpiredUploads()).toEqual({ deleted: 0, failed: 0, purged: 0, skipped: true });
 });
 
 test('processes in bounded batches', async () => {

@@ -15,11 +15,22 @@ function createLimiter({ windowMs, limit, message, keyGenerator }) {
   });
 }
 
-/** Brute-force protection for login, registration and token refresh. */
+/** Brute-force protection for login and registration (per client IP; see TRUST_PROXY). */
 const authLimiter = createLimiter({
   windowMs: config.rateLimit.authWindowMs,
   limit: config.rateLimit.authMax,
   message: 'Too many authentication attempts. Please wait a few minutes and try again.',
+});
+
+/**
+ * Session refresh, separate from authLimiter so that page reloads never use up the
+ * login budget. Refresh tokens are long random single-use values (rotation with reuse
+ * detection), so this limit caps request floods rather than guessing.
+ */
+const refreshLimiter = createLimiter({
+  windowMs: config.rateLimit.refreshWindowMs,
+  limit: config.rateLimit.refreshMax,
+  message: 'Too many session requests. Please wait a few minutes and try again.',
 });
 
 /** Caps how many background jobs a client can submit. */
@@ -72,4 +83,4 @@ const searchLimiter = createLimiter({
   message: 'Too many searches. Please wait a little and try again.',
 });
 
-module.exports = { authLimiter, jobLimiter, articleLimiter, uploadLimiter, chatLimiter, studyLimiter, searchLimiter };
+module.exports = { authLimiter, refreshLimiter, jobLimiter, articleLimiter, uploadLimiter, chatLimiter, studyLimiter, searchLimiter };

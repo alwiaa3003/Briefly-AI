@@ -133,40 +133,78 @@ const UPLOAD_KINDS = Object.freeze({
   },
 });
 
-function submitUploadedVideo({ userId, stored }) {
-  return submitUploadedFile({ userId, stored, kind: SOURCE_KINDS.VIDEO });
+function submitUploadedVideo({ userId, stored, pendingUpload }) {
+  return submitUploadedFile({ userId, stored, kind: SOURCE_KINDS.VIDEO, pendingUpload });
 }
 
-function submitUploadedDocument({ userId, stored }) {
-  return submitUploadedFile({ userId, stored, kind: SOURCE_KINDS.DOCUMENT });
+function submitUploadedDocument({ userId, stored, pendingUpload }) {
+  return submitUploadedFile({ userId, stored, kind: SOURCE_KINDS.DOCUMENT, pendingUpload });
 }
 
-async function submitUploadedFile({ userId, stored, kind }) {
+/**
+ * Turns a stored file into a source and queues its summary.
+ *
+ * `stored` comes from the streaming upload (proxy) or, for direct uploads, from the server's own
+ * verification of the object; `pendingUpload` is then the verified Upload record (status
+ * `verifying`), which is converted instead of creating a new one, and the outcome is recorded on it
+ * so that a repeated completion returns the same result.
+ */
+async function submitUploadedFile({ userId, stored, kind, pendingUpload = null }) {
   const settings = UPLOAD_KINDS[kind];
   const normalizedUrl = `upload:${stored.sha256}`;
   const discardStoredObject = () => storage.deleteObject(stored.storageKey).catch(() => {});
+  const retentionExpiry = () => new Date(Date.now() + settings.retentionDays() * DAY_MS);
+  const recordOutcome = (uploadId, outcome, sourceId) =>
+    Upload.updateOne({ _id: uploadId }, { $set: { completedAt: new Date(), outcome, source: sourceId } });
 
   const existing = await Source.findOne({ user: userId, normalizedUrl });
   if (existing && existing.status !== SOURCE_STATUSES.FAILED) {
     await discardStoredObject();
+    if (pendingUpload) {
+      // Same file as an existing summary: its copy is not needed. Remember the answer.
+      await Upload.updateOne(
+        { _id: pendingUpload._id },
+        { $set: { status: 'deleted', deletedAt: new Date(), completedAt: new Date(), outcome: 'existing', source: existing._id } }
+      );
+    }
     return { source: existing, job: null, outcome: 'existing' };
   }
 
   let upload;
   try {
-    upload = await Upload.create({
-      user: userId,
-      storageKey: stored.storageKey,
-      originalName: stored.originalName,
-      mimeType: stored.mimeType,
-      container: stored.container,
-      sizeBytes: stored.sizeBytes,
-      sha256: stored.sha256,
-      expiresAt: new Date(Date.now() + settings.retentionDays() * DAY_MS),
-    });
+    if (pendingUpload) {
+      upload = await Upload.findOneAndUpdate(
+        { _id: pendingUpload._id, user: userId, status: 'verifying' },
+        {
+          $set: {
+            status: 'stored',
+            mimeType: stored.mimeType,
+            container: stored.container,
+            sizeBytes: stored.sizeBytes,
+            sha256: stored.sha256,
+            expiresAt: retentionExpiry(),
+            verifyingAt: null,
+          },
+        },
+        { new: true, runValidators: true }
+      );
+      if (!upload) throw ApiError.conflict('This upload is already being completed.', 'UPLOAD_IN_PROGRESS');
+    } else {
+      upload = await Upload.create({
+        user: userId,
+        storageKey: stored.storageKey,
+        originalName: stored.originalName,
+        mimeType: stored.mimeType,
+        container: stored.container,
+        sizeBytes: stored.sizeBytes,
+        sha256: stored.sha256,
+        expiresAt: retentionExpiry(),
+      });
+    }
   } catch (error) {
-    // Without an Upload record nothing would ever delete the stored object: remove it now.
-    await discardStoredObject();
+    // Without a stored Upload record nothing would ever delete the object: remove it now
+    // (unless another completion owns it).
+    if (!(error instanceof ApiError && error.code === 'UPLOAD_IN_PROGRESS')) await discardStoredObject();
     throw error;
   }
 
@@ -178,13 +216,23 @@ async function submitUploadedFile({ userId, stored, kind }) {
     await Source.updateOne({ _id: existing._id }, { $set: { upload: upload._id } });
     await Upload.updateOne({ _id: upload._id }, { $set: { source: existing._id } });
     const { source, job } = await retrySource({ userId, sourceId: existing.id });
+    if (pendingUpload) await recordOutcome(upload._id, 'requeued', existing._id);
     return { source, job, outcome: 'requeued' };
   }
 
   try {
     ensureQueueAvailable();
   } catch (error) {
-    await Upload.updateOne({ _id: upload._id }, { $set: { expiresAt: new Date() } });
+    if (pendingUpload) {
+      // The verified file stays usable: completing again once the queue is back creates the source.
+      // (verifyingAt in the past lets the next completion claim it; the original deadline still applies.)
+      await Upload.updateOne(
+        { _id: upload._id },
+        { $set: { status: 'verifying', verifyingAt: new Date(0), expiresAt: pendingUpload.expiresAt } }
+      );
+    } else {
+      await Upload.updateOne({ _id: upload._id }, { $set: { expiresAt: new Date() } });
+    }
     throw error;
   }
 
@@ -202,14 +250,22 @@ async function submitUploadedFile({ userId, stored, kind }) {
   } catch (error) {
     await Upload.updateOne({ _id: upload._id }, { $set: { expiresAt: new Date() } });
     if (error && error.code === DUPLICATE_KEY_ERROR) {
-      return { source: await Source.findOne({ user: userId, normalizedUrl }), job: null, outcome: 'existing' };
+      const winner = await Source.findOne({ user: userId, normalizedUrl });
+      if (pendingUpload && winner) await recordOutcome(upload._id, 'existing', winner._id);
+      return { source: winner, job: null, outcome: 'existing' };
     }
     throw error;
   }
   await Upload.updateOne({ _id: upload._id }, { $set: { source: source._id } });
 
   const job = await startSummaryJob(source);
-  logger.info(`${settings.label} upload submitted`, { sourceId: source.id, jobId: job.id, sizeBytes: stored.sizeBytes });
+  if (pendingUpload) await recordOutcome(upload._id, 'created', source._id);
+  logger.info(`${settings.label} upload submitted`, {
+    sourceId: source.id,
+    jobId: job.id,
+    sizeBytes: stored.sizeBytes,
+    method: pendingUpload ? 'direct' : 'proxy',
+  });
   return { source, job, outcome: 'created' };
 }
 
@@ -469,6 +525,8 @@ async function getDocumentText({ userId, sourceId, page = 1, limit = 20 }) {
 function getDocumentUploadConfig() {
   return {
     enabled: storage.isStorageConfigured(),
+    // The browser uploads straight to object storage (presigned URL); the API only verifies.
+    uploadMethod: 'direct',
     maxBytes: config.documents.maxBytes,
     maxPages: config.documents.maxPages,
     retentionDays: config.documents.retentionDays,
@@ -484,6 +542,7 @@ function getDocumentUploadConfig() {
 function getUploadConfig() {
   return {
     enabled: storage.isStorageConfigured(),
+    uploadMethod: 'direct',
     maxBytes: config.uploads.maxBytes,
     maxDurationMinutes: config.uploads.maxDurationMinutes,
     retentionDays: config.uploads.retentionDays,

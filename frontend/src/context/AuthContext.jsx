@@ -1,6 +1,6 @@
 import { createContext, useCallback, useEffect, useMemo, useState } from 'react';
 import * as authService from '../services/authService';
-import { configureSessionHandlers, setAccessToken } from '../services/apiClient';
+import { configureSessionHandlers, isServerStartingError, setAccessToken } from '../services/apiClient';
 
 export const AuthContext = createContext(null);
 
@@ -9,6 +9,7 @@ export const AuthContext = createContext(null);
  *   'loading'          restoring a session from the refresh cookie on first load
  *   'authenticated'    user is signed in
  *   'unauthenticated'  no valid session
+ *   'unavailable'      the server could not be reached (e.g. still starting); not a sign-out
  */
 export function AuthProvider({ children }) {
   const [state, setState] = useState({ status: 'loading', user: null });
@@ -23,6 +24,25 @@ export function AuthProvider({ children }) {
     setState({ status: 'unauthenticated', user: null });
   }, []);
 
+  /** Restores the session from the refresh cookie. A server that is still starting is not a sign-out. */
+  const restoreSession = useCallback(
+    (isCancelled = () => false) =>
+      authService
+        .refreshSession()
+        .then((session) => !isCancelled() && applySession(session))
+        .catch((error) => {
+          if (isCancelled()) return;
+          if (isServerStartingError(error)) setState({ status: 'unavailable', user: null });
+          else clearSession();
+        }),
+    [applySession, clearSession]
+  );
+
+  const retryConnection = useCallback(() => {
+    setState({ status: 'loading', user: null });
+    return restoreSession();
+  }, [restoreSession]);
+
   useEffect(() => {
     configureSessionHandlers({
       onRefresh: async () => {
@@ -34,14 +54,11 @@ export function AuthProvider({ children }) {
     });
 
     let cancelled = false;
-    authService
-      .refreshSession()
-      .then((session) => !cancelled && applySession(session))
-      .catch(() => !cancelled && clearSession());
+    restoreSession(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [applySession, clearSession]);
+  }, [applySession, clearSession, restoreSession]);
 
   const login = useCallback(
     async (credentials) => {
@@ -77,8 +94,9 @@ export function AuthProvider({ children }) {
       login,
       register,
       logout,
+      retryConnection,
     }),
-    [state, login, register, logout]
+    [state, login, register, logout, retryConnection]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

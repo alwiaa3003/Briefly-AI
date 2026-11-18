@@ -1,4 +1,77 @@
+import axios from 'axios';
 import { apiClient } from './apiClient';
+
+/*
+ * Direct uploads: the file goes from the browser straight to object storage with a short-lived
+ * presigned URL from the API, then the API verifies it. File bytes never pass through the API.
+ *
+ * The storage request uses a separate axios instance: no API base URL, no cookies and no
+ * Authorization header ever go to the storage host.
+ */
+const storageClient = axios.create({ withCredentials: false, timeout: 0 });
+
+function storageError(error, message) {
+  return Object.assign(error, { userMessage: message });
+}
+
+/** Storage answered 403: the presigned URL expired (or was otherwise refused). */
+function isRefusedByStorage(error) {
+  return error?.response?.status === 403;
+}
+
+function putFile(target, file, { onProgress, signal }) {
+  return storageClient.put(target.url, file, {
+    headers: target.headers,
+    signal,
+    // Send the File as is (no JSON transform); the browser sets Content-Length from it.
+    transformRequest: [(data) => data],
+    onUploadProgress: (event) => {
+      if (onProgress && event.total) onProgress(Math.min(1, event.loaded / event.total));
+    },
+  });
+}
+
+/**
+ * start (API) -> PUT (storage) -> complete (API). Resolves like the old multipart upload:
+ * { source, job, duplicate }. An expired URL is renewed once; a cancelled or failed transfer
+ * releases the reservation so nothing is left behind.
+ */
+async function uploadDirect(base, file, { onProgress, signal } = {}) {
+  const start = () =>
+    apiClient
+      .post(`${base}/uploads/direct`, { fileName: file.name, sizeBytes: file.size, mimeType: file.type || '' }, { signal })
+      .then((response) => response.data.data);
+  const release = (id) => apiClient.delete(`${base}/uploads/direct/${encodeURIComponent(id)}`).catch(() => {});
+
+  let started = await start();
+  try {
+    try {
+      await putFile(started.upload, file, { onProgress, signal });
+    } catch (error) {
+      if (signal?.aborted || !isRefusedByStorage(error)) throw error;
+      // The link expired (for example the tab waited too long): get a fresh one, once.
+      await release(started.uploadId);
+      started = await start();
+      await putFile(started.upload, file, { onProgress, signal });
+    }
+  } catch (error) {
+    await release(started.uploadId);
+    if (signal?.aborted || axios.isCancel(error)) throw error;
+    throw storageError(
+      error,
+      isRefusedByStorage(error)
+        ? 'The upload link was refused or has expired. Please try again.'
+        : 'The file could not be sent to storage. Check your connection and try again.'
+    );
+  }
+
+  // The API re-reads the file to verify it (type, size, fingerprint); large files take a moment.
+  const response = await apiClient.post(`${base}/uploads/direct/${encodeURIComponent(started.uploadId)}/complete`, null, {
+    signal,
+    timeout: 0,
+  });
+  return response.data.data;
+}
 
 /** POST /api/articles — resolves with { source, job, duplicate }. */
 export async function submitArticle(url) {
@@ -51,10 +124,11 @@ export async function getUploadConfig() {
 }
 
 /**
- * POST /api/videos/uploads (multipart). The browser streams the file; progress
- * is reported as a fraction 0..1. Pass an AbortSignal to cancel.
+ * Uploads a video: directly to object storage when the server offers it (uploadMethod 'direct'),
+ * otherwise through the API (multipart). Progress is a fraction 0..1; pass an AbortSignal to cancel.
  */
-export async function uploadVideo(file, { onProgress, signal } = {}) {
+export async function uploadVideo(file, { onProgress, signal, method = 'direct' } = {}) {
+  if (method === 'direct') return uploadDirect('/videos', file, { onProgress, signal });
   const form = new FormData();
   form.append('file', file, file.name);
   const response = await apiClient.post('/videos/uploads', form, {
@@ -87,8 +161,9 @@ export async function getDocumentUploadConfig() {
   return response.data.data.uploads;
 }
 
-/** POST /api/documents/uploads (multipart). Progress is reported as a fraction 0..1. */
-export async function uploadDocument(file, { onProgress, signal } = {}) {
+/** Uploads a document (PDF, DOCX, TXT): directly to storage, or multipart through the API. */
+export async function uploadDocument(file, { onProgress, signal, method = 'direct' } = {}) {
+  if (method === 'direct') return uploadDirect('/documents', file, { onProgress, signal });
   const form = new FormData();
   form.append('file', file, file.name);
   const response = await apiClient.post('/documents/uploads', form, {

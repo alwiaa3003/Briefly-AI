@@ -23,7 +23,7 @@ const FILE_ERROR_CODES = new Set([
  *
  * Props:
  *   loadConfig()                     -> { enabled, maxBytes, retentionDays, ... }
- *   upload(file, { onProgress, signal })
+ *   upload(file, { onProgress, signal, method })
  *   validate(file, config)           -> error message | null
  *   inspect(file, config)            -> Promise<{ details?: string, error?: string }> (optional, best effort)
  *   accept, icon, labels: { drop, hint(config), choose, submit, created, createdDescription, setupTitle }
@@ -92,7 +92,12 @@ export default function FileUploadForm({ loadConfig, upload, validate, inspect, 
     setFormError('');
     setProgress(0);
     try {
-      const result = await upload(file, { onProgress: setProgress, signal: controller.signal });
+      const result = await upload(file, {
+        onProgress: setProgress,
+        signal: controller.signal,
+        // 'direct' = browser to storage; older servers only accept uploads through the API.
+        method: config?.uploadMethod === 'direct' ? 'direct' : 'multipart',
+      });
       open(result, { createdTitle: labels.created, createdDescription: labels.createdDescription });
     } catch (err) {
       if (controller.signal.aborted || err.code === 'ERR_CANCELED') {

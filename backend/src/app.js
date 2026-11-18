@@ -8,18 +8,25 @@ const config = require('./config/env');
 const requestLogger = require('./middleware/requestLogger');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 const apiRoutes = require('./routes');
+const { mountFrontend, contentSecurityPolicy } = require('./frontend');
 
 /**
  * Builds the Express application without starting a server or opening any
  * connections, so tests can mount it directly with supertest.
+ *
+ * With FRONTEND_DIST_DIR set (production image), the same app also serves the
+ * built frontend, so the browser talks to one origin.
  */
-function createApp() {
+function createApp({ frontendDistDir = config.frontend.distDir } = {}) {
   const app = express();
+  const servesFrontend = Boolean(frontendDistDir);
 
   app.disable('x-powered-by');
+  // Behind Render's proxy set TRUST_PROXY=1, so rate limits see the real client IP.
   app.set('trust proxy', config.trustProxy);
 
-  app.use(helmet());
+  app.use(servesFrontend ? helmet({ contentSecurityPolicy: false }) : helmet());
+  if (servesFrontend) app.use(contentSecurityPolicy());
   app.use(
     cors({
       origin(origin, callback) {
@@ -40,6 +47,7 @@ function createApp() {
   app.use(requestLogger);
 
   app.use('/api', apiRoutes);
+  if (servesFrontend) mountFrontend(app, frontendDistDir);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

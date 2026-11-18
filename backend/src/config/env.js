@@ -104,6 +104,12 @@ const config = Object.freeze({
   port: readInt('PORT', 5000, { min: 1, max: 65535 }),
   trustProxy: readInt('TRUST_PROXY', 0, { min: 0, max: 10 }),
 
+  // Production single-origin deployment: Express serves the built frontend (frontend/dist) itself.
+  // Empty = API only (development uses the Vite dev server).
+  frontend: Object.freeze({
+    distDir: readString('FRONTEND_DIST_DIR', { defaultValue: '' }),
+  }),
+
   cors: Object.freeze({
     allowedOrigins: Object.freeze(readList('FRONTEND_ORIGIN', 'http://localhost:5173')),
   }),
@@ -123,6 +129,15 @@ const config = Object.freeze({
     backoffMs: readInt('JOB_BACKOFF_MS', 2000, { min: 100, max: 600000 }),
     // The worker only starts taking jobs once the shared Redis (AI budgets) is ready; it exits if that takes longer.
     redisReadyTimeoutMs: readInt('WORKER_REDIS_READY_TIMEOUT_MS', 60000, { min: 1000, max: 600000 }),
+    // Idle polling (Redis commands) of the BullMQ worker. A new job wakes the worker immediately
+    // (BullMQ "marker"), and delayed jobs are always checked at least every 10 s, so a longer idle
+    // wait saves Upstash commands without delaying any job.
+    drainDelaySeconds: readInt('WORKER_DRAIN_DELAY_SECONDS', 60, { min: 1, max: 300 }),
+    // How often stalled jobs (worker crashed or restarted mid-job) are looked for. A restarted worker
+    // checks immediately on startup; this only bounds detection while it keeps running.
+    stalledIntervalMs: readInt('WORKER_STALLED_INTERVAL_MS', 120000, { min: 5000, max: 600000 }),
+    // Hourly cleanup of expired uploads, run in the worker process (no extra BullMQ queue polling).
+    maintenanceIntervalMs: readInt('MAINTENANCE_INTERVAL_MS', 60 * 60 * 1000, { min: 60000, max: 24 * 60 * 60 * 1000 }),
   }),
 
   auth: Object.freeze({
@@ -139,6 +154,11 @@ const config = Object.freeze({
   rateLimit: Object.freeze({
     authWindowMs: 15 * 60 * 1000,
     authMax: readInt('AUTH_RATE_LIMIT_MAX', 20, { min: 1, max: 100000 }),
+    // Session refresh (every page load) has its own budget so reloads never lock users out of login.
+    // Refresh tokens are 256-bit random, single-use and rotation-checked, so guessing is not feasible;
+    // this limit only caps request floods per IP.
+    refreshWindowMs: 15 * 60 * 1000,
+    refreshMax: readInt('AUTH_REFRESH_RATE_LIMIT_MAX', 120, { min: 1, max: 100000 }),
     jobWindowMs: 15 * 60 * 1000,
     jobMax: readInt('JOB_RATE_LIMIT_MAX', 30, { min: 1, max: 100000 }),
     // Article submissions per user per hour (each one costs a Gemini call).
@@ -186,6 +206,16 @@ const config = Object.freeze({
     secretAccessKey: readString('STORAGE_SECRET_ACCESS_KEY', { secret: true }),
     forcePathStyle: readBool('STORAGE_FORCE_PATH_STYLE', false),
     signedUrlTtlSeconds: readInt('STORAGE_SIGNED_URL_TTL_SECONDS', 900, { min: 60, max: 43200 }),
+    // Direct browser-to-storage uploads: lifetime of the presigned PUT URL.
+    uploadUrlTtlSeconds: readInt('STORAGE_UPLOAD_URL_TTL_SECONDS', 900, { min: 60, max: 3600 }),
+  }),
+
+  // Direct uploads that were started but not completed.
+  directUploads: Object.freeze({
+    // A pending upload (and its object, if any bytes arrived) is removed this long after the URL expires.
+    pendingGraceSeconds: readInt('UPLOAD_PENDING_GRACE_SECONDS', 3600, { min: 60, max: 86400 }),
+    // Uploads a user may have started but not completed at the same time.
+    maxPendingPerUser: readInt('UPLOAD_MAX_PENDING_PER_USER', 3, { min: 1, max: 50 }),
   }),
 
   uploads: Object.freeze({

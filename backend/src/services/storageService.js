@@ -9,9 +9,20 @@
  * - Uploads are streamed with multipart upload, so memory use stays at
  *   about partSize x queueSize regardless of file size.
  * - Credentials come only from configuration and never leave this module.
+ * - Direct uploads: the browser gets a short-lived presigned PUT URL for one
+ *   server-chosen key, with the size, type and disposition signed in, so it
+ *   cannot write a different key, size or type.
  */
 
-const { S3Client, DeleteObjectCommand, GetObjectCommand, ListObjectVersionsCommand } = require('@aws-sdk/client-s3');
+const {
+  S3Client,
+  CopyObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectVersionsCommand,
+  PutObjectCommand,
+} = require('@aws-sdk/client-s3');
 const { Upload } = require('@aws-sdk/lib-storage');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const config = require('../config/env');
@@ -22,6 +33,10 @@ const PART_SIZE = 8 * 1024 * 1024;
 const QUEUE_SIZE = 2;
 
 let client = null;
+let presignClient = null;
+
+// Headers the browser must send unchanged with a presigned PUT (part of the signature).
+const SIGNED_UPLOAD_HEADERS = Object.freeze(['content-type', 'content-length', 'content-disposition']);
 
 function isStorageConfigured() {
   const { endpoint, bucket, accessKeyId, secretAccessKey } = config.storage;
@@ -51,6 +66,92 @@ function getClient() {
     });
   }
   return client;
+}
+
+/**
+ * Client used only to presign browser uploads. Checksums are computed only when an operation
+ * requires them: the SDK's default CRC32 would put a checksum of an empty body into the URL,
+ * which a browser upload can never match.
+ */
+function getPresignClient() {
+  if (!isStorageConfigured()) throw storageNotConfiguredError();
+  if (!presignClient) {
+    presignClient = new S3Client({
+      endpoint: config.storage.endpoint,
+      region: config.storage.region,
+      forcePathStyle: config.storage.forcePathStyle,
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
+      credentials: {
+        accessKeyId: config.storage.accessKeyId,
+        secretAccessKey: config.storage.secretAccessKey,
+      },
+    });
+  }
+  return presignClient;
+}
+
+/**
+ * Presigned PUT for one object. The browser must send exactly `headers` (and a body of exactly
+ * `contentLength` bytes, which browsers set from the file); anything else fails the signature.
+ * Returns only what the browser needs: no credentials.
+ */
+async function getSignedUploadUrl(key, { contentType, contentLength, ttlSeconds = config.storage.uploadUrlTtlSeconds }) {
+  const command = new PutObjectCommand({
+    Bucket: config.storage.bucket,
+    Key: key,
+    ContentType: contentType,
+    ContentLength: contentLength,
+    ContentDisposition: 'attachment',
+  });
+  const url = await getSignedUrl(getPresignClient(), command, {
+    expiresIn: ttlSeconds,
+    signableHeaders: new Set(SIGNED_UPLOAD_HEADERS),
+  });
+  return {
+    url,
+    method: 'PUT',
+    headers: { 'Content-Type': contentType, 'Content-Disposition': 'attachment' },
+    expiresAt: new Date(Date.now() + ttlSeconds * 1000),
+  };
+}
+
+function isNotFound(error) {
+  return error?.name === 'NotFound' || error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404;
+}
+
+/** { sizeBytes, contentType } of a stored object, or null when it does not exist. */
+async function headObject(key) {
+  try {
+    const result = await getClient().send(new HeadObjectCommand({ Bucket: config.storage.bucket, Key: key }));
+    return { sizeBytes: Number(result.ContentLength), contentType: result.ContentType || null };
+  } catch (error) {
+    if (isNotFound(error)) return null;
+    throw error;
+  }
+}
+
+/**
+ * Server-side copy inside the bucket (no bytes pass through the API). Used to move a direct
+ * upload to a key the browser was never given, so its presigned URL can no longer touch it.
+ * Content type and disposition are copied with the object.
+ */
+async function copyObject(sourceKey, destinationKey) {
+  const encoded = sourceKey.split('/').map(encodeURIComponent).join('/');
+  await getClient().send(
+    new CopyObjectCommand({
+      Bucket: config.storage.bucket,
+      Key: destinationKey,
+      CopySource: `${config.storage.bucket}/${encoded}`,
+      MetadataDirective: 'COPY',
+    })
+  );
+}
+
+/** Readable stream of an object's bytes (server-side verification only; never sent to clients). */
+async function getObjectStream(key) {
+  const result = await getClient().send(new GetObjectCommand({ Bucket: config.storage.bucket, Key: key }));
+  return result.Body;
 }
 
 /**
@@ -122,4 +223,16 @@ async function deleteObject(key) {
   }
 }
 
-module.exports = { contentDisposition, isStorageConfigured, storageNotConfiguredError, uploadStream, getSignedDownloadUrl, deleteObject };
+module.exports = {
+  contentDisposition,
+  isStorageConfigured,
+  storageNotConfiguredError,
+  uploadStream,
+  getSignedDownloadUrl,
+  getSignedUploadUrl,
+  headObject,
+  copyObject,
+  getObjectStream,
+  deleteObject,
+  SIGNED_UPLOAD_HEADERS,
+};

@@ -1,0 +1,52 @@
+# Keep the build context (and the image) free of secrets, dependencies and local data.
+
+# Secrets and local configuration: never sent to the Docker daemon.
+**/.env
+**/.env.*
+.env
+.env.*
+
+# Version control and editor files
+.git
+.gitignore
+.github
+.vscode
+.idea
+**/.DS_Store
+**/Thumbs.db
+
+# Dependencies and environments (installed inside the image)
+**/node_modules
+.venv
+**/.venv
+**/venv
+
+# Build output and caches (the frontend is built inside the image)
+frontend/dist
+**/dist
+**/coverage
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.eslintcache
+**/.vite
+
+# Tests, docs and local tooling are not part of the runtime image
+backend/tests
+processing-service/tests
+frontend/src/tests
+docs
+docker-compose.yml
+deploy/tests
+
+# Logs, uploads and local data
+**/*.log
+**/logs
+**/uploads
+**/tmp
+**/temp
+**/data
+**/mongo-data
+**/redis-data

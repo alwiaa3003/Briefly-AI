@@ -21,6 +21,10 @@ function createProcessingWorker({ concurrency = config.queue.workerConcurrency }
     // A job whose lock is lost twice (e.g. the worker crashed mid-job) is failed
     // instead of being retried forever.
     maxStalledCount: 2,
+    // Fewer idle Redis commands (Upstash free tier). New jobs still wake the worker at once and
+    // delayed jobs are still checked at least every 10 s (see config.queue.drainDelaySeconds).
+    drainDelay: config.queue.drainDelaySeconds,
+    stalledInterval: config.queue.stalledIntervalMs,
     // Longer waits for transient AI errors; quota / rate limits use delayed retries instead (processor.js).
     settings: { backoffStrategy },
   });
